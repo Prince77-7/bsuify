@@ -40,6 +40,10 @@ export interface CanvasState {
   logos: Logo[];
   selectedLogoId: number | null;
   
+  // Arrow storage
+  arrows: Arrow[];
+  selectedArrowId: number | null;
+  
   // Selection and interaction
   selectedElements: SelectedElement[];
   showSelectionHandles: boolean;
@@ -109,16 +113,28 @@ export interface Logo {
   backgroundRadius: number;
 }
 
+export interface Arrow {
+  id: number;
+  name: string;
+  startX: number;
+  startY: number;
+  endX: number;
+  endY: number;
+  color: string;
+  width: number;
+  visible: boolean;
+}
+
 export interface SelectedElement {
   id: string;
-  type: 'shape' | 'vectorPath' | 'logo' | 'text';
+  type: 'shape' | 'vectorPath' | 'logo' | 'text' | 'arrow';
   elementId: string | number;
 }
 
 export interface ResizeHandle {
   type: 'corner' | 'edge' | 'rotation';
-  position: 'nw' | 'ne' | 'sw' | 'se' | 'n' | 's' | 'e' | 'w' | 'rotation';
-  elementType: 'shape' | 'logo' | 'text';
+  position: 'nw' | 'ne' | 'sw' | 'se' | 'n' | 's' | 'e' | 'w' | 'rotation' | 'start' | 'end';
+  elementType: 'shape' | 'logo' | 'text' | 'arrow';
   elementId: string | number;
   x: number;
   y: number;
@@ -204,6 +220,8 @@ const initialState: CanvasState = {
   selectedVectorPathId: null,
   logos: [],
   selectedLogoId: null,
+  arrows: [],
+  selectedArrowId: null,
   selectedElements: [],
   showSelectionHandles: true,
   resizeHandle: null,
@@ -256,6 +274,21 @@ function createCanvasStore() {
         }));
         
         saveState();
+        
+        // Add a test arrow for debugging
+        setTimeout(() => {
+          console.log('Adding test arrow');
+          canvasStore.addArrow({
+            name: 'Test Arrow',
+            startX: 100,
+            startY: 100,
+            endX: 300,
+            endY: 200,
+            color: '#ff0000',
+            width: 3,
+            visible: true
+          });
+        }, 1000);
       }
     },
     
@@ -838,6 +871,166 @@ function createCanvasStore() {
       return state.logos;
     },
 
+    // Arrow management
+    addArrow: (arrowData: Omit<Arrow, 'id'>) => {
+      update(state => {
+        const newArrow: Arrow = {
+          ...arrowData,
+          id: Date.now() + Math.random()
+        };
+        return {
+          ...state,
+          arrows: [...state.arrows, newArrow]
+        };
+      });
+      redrawCanvas();
+    },
+
+    updateArrow: (arrowId: number, updates: Partial<Arrow>) => {
+      update(state => ({
+        ...state,
+        arrows: state.arrows.map(arrow => 
+          arrow.id === arrowId ? { ...arrow, ...updates } : arrow
+        )
+      }));
+      redrawCanvas();
+    },
+
+    removeArrow: (arrowId: number) => {
+      update(state => ({
+        ...state,
+        arrows: state.arrows.filter(arrow => arrow.id !== arrowId)
+      }));
+      redrawCanvas();
+    },
+
+    // Expose redraw function
+    redrawCanvas: () => {
+      redrawCanvas();
+    },
+
+    // Selection management
+    setSelectedElements: (elements: SelectedElement[]) => {
+      update(state => ({
+        ...state,
+        selectedElements: elements
+      }));
+      redrawCanvas();
+    },
+
+    // Arrow preview for creation
+    // Arrow hit detection
+    findArrowAt: (x: number, y: number): Arrow | null => {
+      const state = get(canvasStore);
+      const tolerance = 25; // Increased tolerance even more
+      
+      console.log('Checking arrow hit at:', x, y, 'Total arrows:', state.arrows.length);
+      
+      for (const arrow of state.arrows) {
+        if (!arrow.visible) continue;
+        
+        console.log('Checking arrow:', arrow.id, 'from', arrow.startX, arrow.startY, 'to', arrow.endX, arrow.endY);
+        
+        // Check if point is near the arrow line
+        const distance = pointToLineDistance(x, y, arrow.startX, arrow.startY, arrow.endX, arrow.endY);
+        console.log('Distance to arrow', arrow.id, ':', distance);
+        
+        if (distance <= tolerance) {
+          console.log('Arrow hit!', arrow.id);
+          // Flash the arrow to show it was detected
+          canvasStore.updateArrow(arrow.id, { color: '#00ff00' });
+          setTimeout(() => {
+            canvasStore.updateArrow(arrow.id, { color: '#ff0000' });
+          }, 200);
+          return arrow;
+        }
+        
+        // Also check if we're near the start or end points
+        const startDistance = Math.sqrt(Math.pow(x - arrow.startX, 2) + Math.pow(y - arrow.startY, 2));
+        const endDistance = Math.sqrt(Math.pow(x - arrow.endX, 2) + Math.pow(y - arrow.endY, 2));
+        
+        if (startDistance <= tolerance || endDistance <= tolerance) {
+          console.log('Arrow endpoint hit!', arrow.id);
+          // Flash the arrow to show it was detected
+          canvasStore.updateArrow(arrow.id, { color: '#00ff00' });
+          setTimeout(() => {
+            canvasStore.updateArrow(arrow.id, { color: '#ff0000' });
+          }, 200);
+          return arrow;
+        }
+      }
+      
+      console.log('No arrow hit');
+      return null;
+    },
+
+    drawArrowPreview: (startX: number, startY: number, endX: number, endY: number) => {
+      if (!mainContext) return;
+      
+      mainContext.save();
+      mainContext.strokeStyle = '#007ACC';
+      mainContext.fillStyle = '#007ACC';
+      mainContext.lineWidth = 2;
+      mainContext.lineCap = 'round';
+      mainContext.lineJoin = 'round';
+      mainContext.setLineDash([5, 5]);
+      
+      // Draw preview line
+      mainContext.beginPath();
+      mainContext.moveTo(startX, startY);
+      mainContext.lineTo(endX, endY);
+      mainContext.stroke();
+      
+      // Draw preview arrowhead
+      const deltaX = endX - startX;
+      const deltaY = endY - startY;
+      const angle = Math.atan2(deltaY, deltaX);
+      const headLength = 12;
+      
+      const headAngle1 = angle - Math.PI / 6;
+      const headAngle2 = angle + Math.PI / 6;
+      
+      const head1X = endX - headLength * Math.cos(headAngle1);
+      const head1Y = endY - headLength * Math.sin(headAngle1);
+      const head2X = endX - headLength * Math.cos(headAngle2);
+      const head2Y = endY - headLength * Math.sin(headAngle2);
+      
+      mainContext.setLineDash([]);
+      mainContext.beginPath();
+      mainContext.moveTo(endX, endY);
+      mainContext.lineTo(head1X, head1Y);
+      mainContext.lineTo(head2X, head2Y);
+      mainContext.closePath();
+      mainContext.fill();
+      
+      mainContext.restore();
+    },
+
+    // Expose resize handle functions for Canvas component
+    findResizeHandleAt: (x: number, y: number) => findResizeHandleAt(x, y),
+    
+    startResize: (handle: ResizeHandle, startX: number, startY: number) => {
+      update(state => ({
+        ...state,
+        resizeHandle: handle,
+        isResizing: true,
+        startX,
+        startY
+      }));
+    },
+    
+    stopResize: () => {
+      update(state => ({
+        ...state,
+        resizeHandle: null,
+        isResizing: false
+      }));
+    },
+    
+    performResize: (currentX: number, currentY: number) => {
+      handleResize(currentX, currentY);
+    },
+
     // Vector path management
     updateVectorPath: (id: string, updates: Partial<VectorPath>) => {
       update(state => ({
@@ -1418,9 +1611,10 @@ function createCanvasStore() {
       });
     }
 
-    // 3. Annotations layer - logos from the right panel
+    // 3. Annotations layer - logos and arrows from the right panel
     if (annotationsLayer?.visible) {
       drawAllLogos();
+      drawAllArrows();
     }
 
     // Always draw selection indicators on top
@@ -2110,6 +2304,66 @@ function createCanvasStore() {
     });
   }
 
+  function drawArrow(arrow: Arrow) {
+    if (!mainContext) return;
+    
+    console.log('Drawing arrow:', arrow.id, 'from', arrow.startX, arrow.startY, 'to', arrow.endX, arrow.endY);
+    
+    mainContext.save();
+    
+    // Set arrow style - make it very visible for testing
+    mainContext.strokeStyle = arrow.color;
+    mainContext.fillStyle = arrow.color;
+    mainContext.lineWidth = arrow.width;
+    mainContext.lineCap = 'round';
+    mainContext.lineJoin = 'round';
+    
+    // Draw arrow shaft
+    mainContext.beginPath();
+    mainContext.moveTo(arrow.startX, arrow.startY);
+    mainContext.lineTo(arrow.endX, arrow.endY);
+    mainContext.stroke();
+    
+    // Draw simple arrowhead
+    const deltaX = arrow.endX - arrow.startX;
+    const deltaY = arrow.endY - arrow.startY;
+    const angle = Math.atan2(deltaY, deltaX);
+    const headLength = 20;
+    
+    // Calculate arrowhead points
+    const headAngle1 = angle - Math.PI / 6; // 30 degrees
+    const headAngle2 = angle + Math.PI / 6;
+    
+    const head1X = arrow.endX - headLength * Math.cos(headAngle1);
+    const head1Y = arrow.endY - headLength * Math.sin(headAngle1);
+    const head2X = arrow.endX - headLength * Math.cos(headAngle2);
+    const head2Y = arrow.endY - headLength * Math.sin(headAngle2);
+    
+    // Draw filled arrowhead
+    mainContext.beginPath();
+    mainContext.moveTo(arrow.endX, arrow.endY);
+    mainContext.lineTo(head1X, head1Y);
+    mainContext.lineTo(head2X, head2Y);
+    mainContext.closePath();
+    mainContext.fill();
+    
+    mainContext.restore();
+  }
+
+  function drawAllArrows() {
+    const state = get(canvasStore);
+    if (!mainContext) return;
+    
+    console.log('Drawing arrows:', state.arrows.length);
+    
+    state.arrows.forEach(arrow => {
+      if (arrow.visible) {
+        console.log('Drawing arrow:', arrow);
+        drawArrow(arrow);
+      }
+    });
+  }
+
   function drawAllLogos() {
     const state = get(canvasStore);
     if (!mainContext) return;
@@ -2178,6 +2432,8 @@ function createCanvasStore() {
         drawVectorPathSelection(element.elementId as string);
       } else if (element.type === 'logo') {
         drawLogoSelection(parseInt(element.elementId as string));
+      } else if (element.type === 'arrow') {
+        drawArrowSelection(parseInt(element.elementId as string));
       }
     });
 
@@ -2187,6 +2443,35 @@ function createCanvasStore() {
         drawTextSelection(text.id);
       }
     });
+  }
+
+  function drawArrowSelection(arrowId: number) {
+    const state = get(canvasStore);
+    const arrow = state.arrows.find(a => a.id === arrowId);
+    if (!arrow || !mainContext) return;
+    
+    mainContext.save();
+    mainContext.strokeStyle = '#007ACC';
+    mainContext.lineWidth = 3;
+    mainContext.setLineDash([5, 5]);
+    
+    // Draw selection outline around arrow
+    mainContext.beginPath();
+    mainContext.moveTo(arrow.startX, arrow.startY);
+    mainContext.lineTo(arrow.endX, arrow.endY);
+    mainContext.stroke();
+    
+    // Draw control handles
+    const handleSize = 8;
+    mainContext.fillStyle = '#007ACC';
+    mainContext.setLineDash([]);
+    
+    // Start handle
+    mainContext.fillRect(arrow.startX - handleSize/2, arrow.startY - handleSize/2, handleSize, handleSize);
+    // End handle
+    mainContext.fillRect(arrow.endX - handleSize/2, arrow.endY - handleSize/2, handleSize, handleSize);
+    
+    mainContext.restore();
   }
 
   function drawLogoSelection(logoId: number) {
@@ -2275,7 +2560,30 @@ function createCanvasStore() {
     
     // Check other elements
     for (const element of state.selectedElements) {
-      if (element.type === 'logo') {
+      if (element.type === 'arrow') {
+        const arrow = state.arrows.find(a => a.id.toString() === element.elementId);
+        if (!arrow) continue;
+        
+        const handles = [
+          { pos: 'start', x: arrow.startX, y: arrow.startY },
+          { pos: 'end', x: arrow.endX, y: arrow.endY }
+        ];
+        
+        for (const handle of handles) {
+          if (Math.abs(x - handle.x) <= handleSize/2 + tolerance && 
+              Math.abs(y - handle.y) <= handleSize/2 + tolerance) {
+            return {
+              type: 'corner',
+              position: handle.pos as 'start' | 'end',
+              elementType: 'arrow',
+              elementId: arrow.id.toString(),
+              x: handle.x,
+              y: handle.y,
+              size: handleSize
+            };
+          }
+        }
+      } else if (element.type === 'logo') {
         const logo = state.logos.find(l => l.id.toString() === element.elementId);
         if (!logo || !logo.image) continue;
         
@@ -2396,6 +2704,21 @@ function createCanvasStore() {
           fontSize: Math.round(newFontSize),
           x: newX,
           y: newY
+        });
+      }
+    } else if (handle.elementType === 'arrow') {
+      const arrow = state.arrows.find(a => a.id.toString() === handle.elementId);
+      if (!arrow) return;
+      
+      if (handle.position === 'start') {
+        canvasStore.updateArrow(arrow.id, {
+          startX: currentX,
+          startY: currentY
+        });
+      } else if (handle.position === 'end') {
+        canvasStore.updateArrow(arrow.id, {
+          endX: currentX,
+          endY: currentY
         });
       }
     } else if (handle.elementType === 'logo') {

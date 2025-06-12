@@ -102,6 +102,36 @@
             textInputElement.focus();
           }
         }, 10);
+      } else if (activeTool === 'move') {
+        console.log('Move tool click at:', coords.x, coords.y);
+        console.log('Canvas rect:', canvasElement.getBoundingClientRect());
+        console.log('Canvas dimensions:', canvasElement.width, canvasElement.height);
+        console.log('Mouse event:', e.clientX, e.clientY);
+        
+        // Check for resize handles first
+        const resizeHandle = canvasStore.findResizeHandleAt(coords.x, coords.y);
+        if (resizeHandle) {
+          console.log('Resize handle clicked:', resizeHandle);
+          canvasStore.startResize(resizeHandle, coords.x, coords.y);
+          e.preventDefault();
+          return;
+        }
+        
+        // Check for arrow selection
+        const clickedArrow = canvasStore.findArrowAt(coords.x, coords.y);
+        if (clickedArrow) {
+          console.log('Arrow clicked:', clickedArrow);
+          canvasStore.setSelectedElements([{
+            id: `arrow-${clickedArrow.id}`,
+            type: 'arrow',
+            elementId: clickedArrow.id.toString()
+          }]);
+          e.preventDefault();
+          return;
+        }
+        
+        console.log('No arrow clicked, proceeding with normal drawing');
+        canvasStore.startDrawing(coords.x, coords.y);
       } else {
         canvasStore.startDrawing(coords.x, coords.y);
       }
@@ -114,13 +144,48 @@
       const coords = getCanvasCoordinates(e);
       
       if (isMouseDown) {
-        canvasStore.draw(coords.x, coords.y);
+        if (activeTool === 'move') {
+          // Check if we're resizing
+          if ($canvasStore.isResizing) {
+            canvasStore.performResize(coords.x, coords.y);
+          } else {
+            // Check if we're dragging an arrow
+            const selectedElements = $canvasStore.selectedElements;
+            const arrowSelection = selectedElements.find(el => el.type === 'arrow');
+            if (arrowSelection) {
+              const deltaX = coords.x - lastX;
+              const deltaY = coords.y - lastY;
+              const arrowId = parseInt(arrowSelection.elementId as string);
+              const arrow = $canvasStore.arrows.find(a => a.id === arrowId);
+              if (arrow) {
+                canvasStore.updateArrow(arrowId, {
+                  startX: arrow.startX + deltaX,
+                  startY: arrow.startY + deltaY,
+                  endX: arrow.endX + deltaX,
+                  endY: arrow.endY + deltaY
+                });
+              }
+            } else {
+              canvasStore.draw(coords.x, coords.y);
+            }
+          }
+        } else {
+          canvasStore.draw(coords.x, coords.y);
+        }
       } else if (activeTool === 'pen') {
         // Show preview for pen tool even when not drawing
         canvasStore.draw(coords.x, coords.y);
       } else if (activeTool === 'move') {
         // Check for resize handles and update cursor
         updateCursorForResizeHandles(coords.x, coords.y);
+        
+        // Update cursor for arrows
+        const arrow = canvasStore.findArrowAt(coords.x, coords.y);
+        if (arrow) {
+          canvasElement.style.cursor = 'move';
+        } else if (canvasElement.style.cursor === 'move') {
+          canvasElement.style.cursor = 'default';
+        }
       }
       
       lastX = coords.x;
@@ -131,6 +196,11 @@
     canvasElement.addEventListener('mouseup', (e) => {
       if (isMouseDown) {
         isMouseDown = false;
+        
+        // Stop resizing if we were resizing
+        if ($canvasStore.isResizing) {
+          canvasStore.stopResize();
+        }
         
         // For shape tools, pass the final coordinates
         if ((activeTool === 'square' || activeTool === 'circle') && imageLoaded) {
@@ -145,6 +215,12 @@
     canvasElement.addEventListener('mouseleave', () => {
       if (isMouseDown) {
         isMouseDown = false;
+        
+        // Stop resizing if we were resizing
+        if ($canvasStore.isResizing) {
+          canvasStore.stopResize();
+        }
+        
         canvasStore.stopDrawing();
       }
       // Clear pen tool preview when mouse leaves canvas
@@ -219,74 +295,33 @@
   function updateCursorForResizeHandles(x: number, y: number) {
     if (!canvasElement) return;
     
-    // This is a simplified version - we'll need to expose the findResizeHandleAt function
-    // For now, let's check if we're over a selected element
-    const selectedElements = $canvasStore.selectedElements;
-    if (selectedElements.length === 0) {
-      canvasElement.style.cursor = 'default';
+    // Check for resize handles using the exposed function
+    const resizeHandle = canvasStore.findResizeHandleAt(x, y);
+    if (resizeHandle) {
+      // Set appropriate cursor based on handle type and position
+      if (resizeHandle.elementType === 'arrow') {
+        if (resizeHandle.position === 'start' || resizeHandle.position === 'end') {
+          canvasElement.style.cursor = 'crosshair';
+        }
+      } else if (resizeHandle.type === 'corner') {
+        switch (resizeHandle.position) {
+          case 'nw':
+          case 'se':
+            canvasElement.style.cursor = 'nw-resize';
+            break;
+          case 'ne':
+          case 'sw':
+            canvasElement.style.cursor = 'ne-resize';
+            break;
+        }
+      } else if (resizeHandle.type === 'rotation') {
+        canvasElement.style.cursor = 'crosshair';
+      }
       return;
     }
     
-    // Check if we're over a resize handle area
-    let overHandle = false;
-    const handleSize = 8;
-    const tolerance = 4;
-    
-    for (const element of selectedElements) {
-      if (element.type === 'logo') {
-        const logo = $canvasStore.logos.find(l => l.id.toString() === element.elementId);
-        if (!logo || !logo.image) continue;
-        
-        const scaledWidth = logo.image.width * (logo.scale / 100);
-        const scaledHeight = logo.image.height * (logo.scale / 100);
-        
-        const handles = [
-          { pos: 'nw', x: logo.x, y: logo.y, cursor: 'nw-resize' },
-          { pos: 'ne', x: logo.x + scaledWidth, y: logo.y, cursor: 'ne-resize' },
-          { pos: 'sw', x: logo.x, y: logo.y + scaledHeight, cursor: 'sw-resize' },
-          { pos: 'se', x: logo.x + scaledWidth, y: logo.y + scaledHeight, cursor: 'se-resize' }
-        ];
-        
-        for (const handle of handles) {
-          if (Math.abs(x - handle.x) <= handleSize/2 + tolerance && 
-              Math.abs(y - handle.y) <= handleSize/2 + tolerance) {
-            canvasElement.style.cursor = handle.cursor;
-            overHandle = true;
-            break;
-          }
-        }
-      } else if (element.type === 'shape') {
-        const shape = $canvasStore.completedShapes.find(s => s.id === element.elementId);
-        if (!shape) continue;
-        
-        const minX = Math.min(shape.startX, shape.endX);
-        const maxX = Math.max(shape.startX, shape.endX);
-        const minY = Math.min(shape.startY, shape.endY);
-        const maxY = Math.max(shape.startY, shape.endY);
-        
-        const handles = [
-          { pos: 'nw', x: minX, y: minY, cursor: 'nw-resize' },
-          { pos: 'ne', x: maxX, y: minY, cursor: 'ne-resize' },
-          { pos: 'sw', x: minX, y: maxY, cursor: 'sw-resize' },
-          { pos: 'se', x: maxX, y: maxY, cursor: 'se-resize' }
-        ];
-        
-        for (const handle of handles) {
-          if (Math.abs(x - handle.x) <= handleSize/2 + tolerance && 
-              Math.abs(y - handle.y) <= handleSize/2 + tolerance) {
-            canvasElement.style.cursor = handle.cursor;
-            overHandle = true;
-            break;
-          }
-        }
-      }
-      
-      if (overHandle) break;
-    }
-    
-    if (!overHandle) {
-      canvasElement.style.cursor = 'move';
-    }
+    // Default cursor
+    canvasElement.style.cursor = 'default';
   }
 
   async function handleFileUpload(event: Event) {

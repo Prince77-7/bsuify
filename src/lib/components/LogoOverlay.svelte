@@ -200,80 +200,167 @@
     });
   }
 
-  function handleArrowToggle(hasArrow: boolean) {
-    if (!selectedLogo) return;
-    canvasStore.updateLogo(selectedLogo.id, { 
-      hasArrow,
-      arrowAngle: selectedLogo.arrowAngle || 0,
-      arrowLength: selectedLogo.arrowLength || 40,
-      arrowColor: selectedLogo.arrowColor || '#000000',
-      arrowWidth: selectedLogo.arrowWidth || 3
-    });
+  // Arrow management
+  let selectedArrow: any = null;
+  let isCreatingArrow = false;
+  let arrowStartX = 0;
+  let arrowStartY = 0;
+  let currentMouseX = 0;
+  let currentMouseY = 0;
+  let isDraggingArrow = false;
+  let dragOffset = { x: 0, y: 0 };
+
+  $: arrows = $canvasStore.arrows;
+  $: selectedElements = $canvasStore.selectedElements;
+
+  // Sync arrow selection with canvas selection
+  $: {
+    const arrowSelection = selectedElements.find(el => el.type === 'arrow');
+    if (arrowSelection) {
+      const arrowId = parseInt(arrowSelection.elementId as string);
+      const arrow = arrows.find(a => a.id === arrowId);
+      if (arrow && selectedArrow?.id !== arrow.id) {
+        selectedArrow = arrow;
+      }
+    } else if (selectedArrow) {
+      // Clear selection if no arrow is selected on canvas
+      selectedArrow = null;
+    }
   }
 
-  function handleArrowAngleChange(arrowAngle: number) {
-    if (!selectedLogo) return;
-    canvasStore.updateLogo(selectedLogo.id, { arrowAngle });
-  }
-
-  function handleArrowLengthChange(arrowLength: number) {
-    if (!selectedLogo) return;
-    canvasStore.updateLogo(selectedLogo.id, { arrowLength });
-  }
-
-  function handleArrowColorChange(arrowColor: string) {
-    if (!selectedLogo) return;
-    canvasStore.updateLogo(selectedLogo.id, { arrowColor });
-  }
-
-  function handleArrowWidthChange(arrowWidth: number) {
-    if (!selectedLogo) return;
-    canvasStore.updateLogo(selectedLogo.id, { arrowWidth });
-  }
-
-  // Arrow positioning state
-  let isPositioningArrow = false;
-  let arrowPreviewAngle = 0;
-
-  function startArrowPositioning() {
-    if (!selectedLogo) return;
-    isPositioningArrow = true;
-  }
-
-  function handleMouseMoveForArrow(event: MouseEvent) {
-    if (!isPositioningArrow || !selectedLogo) return;
+  function startCreatingArrow() {
+    // Create a simple test arrow first
+    const testArrow = {
+      name: `Test Arrow ${arrows.length + 1}`,
+      startX: 100,
+      startY: 100,
+      endX: 300,
+      endY: 200,
+      color: '#ff0000',
+      width: 6,
+      visible: true
+    };
     
-    // Get logo center position on canvas
+    console.log('Creating test arrow:', testArrow);
+    canvasStore.addArrow(testArrow);
+    
+    // Also start interactive creation
+    isCreatingArrow = true;
+    arrowStartX = 0;
+    arrowStartY = 0;
+    
+    // Add event listeners to the canvas specifically
     const canvas = document.querySelector('canvas');
-    if (!canvas) return;
+    if (canvas) {
+      canvas.addEventListener('click', handleArrowClick);
+      canvas.addEventListener('mousemove', handleArrowMouseMove);
+      canvas.style.cursor = 'crosshair';
+    }
+  }
+
+  function handleArrowClick(event: MouseEvent) {
+    event.preventDefault();
+    event.stopPropagation();
     
+    const canvas = event.target as HTMLCanvasElement;
     const rect = canvas.getBoundingClientRect();
-    const mouseX = event.clientX - rect.left;
-    const mouseY = event.clientY - rect.top;
-    
-    // Calculate logo center (accounting for scale and canvas zoom)
     const zoom = $canvasStore.zoom / 100;
-    const logoCenterX = selectedLogo.x * zoom;
-    const logoCenterY = selectedLogo.y * zoom;
     
-    // Calculate angle from logo center to mouse
-    const deltaX = mouseX - logoCenterX;
-    const deltaY = mouseY - logoCenterY;
-    const angle = Math.atan2(deltaY, deltaX) * (180 / Math.PI);
+    // Convert screen coordinates to canvas coordinates
+    const x = (event.clientX - rect.left) / zoom;
+    const y = (event.clientY - rect.top) / zoom;
     
-    arrowPreviewAngle = angle;
+    if (!arrowStartX && !arrowStartY) {
+      // First click - set start point
+      arrowStartX = x;
+      arrowStartY = y;
+      console.log('Arrow start set:', arrowStartX, arrowStartY);
+    } else {
+      // Second click - create arrow
+      const newArrow = {
+        name: `Arrow ${arrows.length + 1}`,
+        startX: arrowStartX,
+        startY: arrowStartY,
+        endX: x,
+        endY: y,
+        color: '#000000',
+        width: 4,
+        visible: true
+      };
+      
+      console.log('Creating arrow:', newArrow);
+      canvasStore.addArrow(newArrow);
+      finishCreatingArrow();
+    }
   }
 
-  function finishArrowPositioning() {
-    if (!isPositioningArrow || !selectedLogo) return;
+  function handleArrowMouseMove(event: MouseEvent) {
+    if (!isCreatingArrow) return;
     
-    isPositioningArrow = false;
-    handleArrowAngleChange(arrowPreviewAngle);
+    const canvas = event.target as HTMLCanvasElement;
+    const rect = canvas.getBoundingClientRect();
+    const zoom = $canvasStore.zoom / 100;
+    
+    currentMouseX = (event.clientX - rect.left) / zoom;
+    currentMouseY = (event.clientY - rect.top) / zoom;
+    
+    // Trigger canvas redraw to show preview
+    if (arrowStartX && arrowStartY) {
+      canvasStore.redrawCanvas();
+      // Draw preview arrow
+      canvasStore.drawArrowPreview(arrowStartX, arrowStartY, currentMouseX, currentMouseY);
+    }
   }
 
-  function cancelArrowPositioning() {
-    isPositioningArrow = false;
-    arrowPreviewAngle = selectedLogo?.arrowAngle || 0;
+  function finishCreatingArrow() {
+    isCreatingArrow = false;
+    arrowStartX = 0;
+    arrowStartY = 0;
+    
+    const canvas = document.querySelector('canvas');
+    if (canvas) {
+      canvas.removeEventListener('click', handleArrowClick);
+      canvas.removeEventListener('mousemove', handleArrowMouseMove);
+      canvas.style.cursor = 'default';
+    }
+  }
+
+  function selectArrow(arrow: any) {
+    selectedArrow = selectedArrow?.id === arrow.id ? null : arrow;
+    
+    // Update canvas selection
+    if (selectedArrow) {
+      canvasStore.setSelectedElements([{
+        id: `arrow-${arrow.id}`,
+        type: 'arrow',
+        elementId: arrow.id
+      }]);
+    } else {
+      canvasStore.setSelectedElements([]);
+    }
+  }
+
+  function removeArrow(arrowId: number) {
+    if (confirm('Remove this arrow? This action cannot be undone.')) {
+      canvasStore.removeArrow(arrowId);
+      if (selectedArrow?.id === arrowId) {
+        selectedArrow = null;
+      }
+    }
+  }
+
+  function toggleArrowVisibility(arrow: any) {
+    canvasStore.updateArrow(arrow.id, { visible: !arrow.visible });
+  }
+
+  function handleArrowColorChange(color: string) {
+    if (!selectedArrow) return;
+    canvasStore.updateArrow(selectedArrow.id, { color });
+  }
+
+  function handleArrowWidthChange(width: number) {
+    if (!selectedArrow) return;
+    canvasStore.updateArrow(selectedArrow.id, { width });
   }
 
   function centerLogo() {
@@ -585,7 +672,7 @@
             <span>360°</span>
           </div>
         </div>
-
+        
         <!-- Background Controls -->
         <div class="space-y-3">
           <div class="flex items-center justify-between">
@@ -691,6 +778,225 @@
             </div>
           {/if}
         </div>
+
+    <!-- Arrows Section -->
+    <div class="border-t border-gray-200 pt-6">
+      <div class="flex items-center justify-between mb-4">
+        <h4 class="font-medium text-gray-700 flex items-center">
+          <div class="w-4 h-4 mr-2 bg-gradient-to-br from-red-400 to-red-500 rounded-sm flex items-center justify-center">
+            <span class="text-white text-xs">→</span>
+          </div>
+          Arrows
+        </h4>
+        <div class="flex space-x-2">
+          <button 
+            class="btn-secondary text-sm py-2 px-3"
+            on:click={() => {
+              const simpleArrow = {
+                name: `Simple Arrow ${arrows.length + 1}`,
+                startX: 50 + (arrows.length * 20),
+                startY: 50 + (arrows.length * 20),
+                endX: 200 + (arrows.length * 20),
+                endY: 150 + (arrows.length * 20),
+                color: '#000000',
+                width: 4,
+                visible: true
+              };
+              canvasStore.addArrow(simpleArrow);
+            }}
+          >
+            + Quick Arrow
+          </button>
+          <button 
+            class="btn-secondary text-sm py-2 px-3 {isCreatingArrow ? 'bg-primary-100 border-primary-300' : ''}"
+            on:click={isCreatingArrow ? finishCreatingArrow : startCreatingArrow}
+          >
+            {isCreatingArrow ? 'Cancel' : 'Draw Arrow'}
+          </button>
+        </div>
+      </div>
+
+      {#if isCreatingArrow}
+        <div class="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+          <p class="text-sm text-blue-700 font-medium mb-1">Creating Arrow</p>
+          <p class="text-xs text-blue-600">Click once to set start point, then click again to set end point.</p>
+        </div>
+      {/if}
+
+      <!-- Arrow List -->
+      <div class="space-y-2 max-h-48 overflow-y-auto">
+        {#each arrows as arrow (arrow.id)}
+          <div 
+            class="border rounded-lg p-3 transition-all duration-200 cursor-pointer {selectedArrow?.id === arrow.id ? 'border-primary-300 bg-primary-50' : 'border-gray-200 hover:border-gray-300 bg-white'}"
+            on:click={() => selectArrow(arrow)}
+          >
+            <div class="flex items-center justify-between">
+              <div class="flex items-center space-x-3">
+                <div 
+                  class="w-6 h-6 rounded border-2 flex items-center justify-center text-xs font-bold"
+                  style="background-color: {arrow.color}; color: {arrow.color === '#ffffff' ? '#000' : '#fff'}"
+                >
+                  →
+                </div>
+                <span class="text-sm font-medium text-gray-700">{arrow.name}</span>
+              </div>
+              
+              <div class="flex items-center space-x-2">
+                <button 
+                  class="text-gray-400 hover:text-gray-600 transition-colors"
+                  on:click|stopPropagation={() => toggleArrowVisibility(arrow)}
+                  title={arrow.visible ? 'Hide arrow' : 'Show arrow'}
+                >
+                  {#if arrow.visible}
+                    <Eye class="w-4 h-4" />
+                  {:else}
+                    <EyeOff class="w-4 h-4" />
+                  {/if}
+                </button>
+                <button 
+                  class="text-red-400 hover:text-red-600 transition-colors"
+                  on:click|stopPropagation={() => removeArrow(arrow.id)}
+                  title="Remove arrow"
+                >
+                  <Trash2 class="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          </div>
+        {/each}
+        
+        {#if arrows.length === 0}
+          <div class="text-center py-8 text-gray-500">
+            <div class="w-12 h-12 mx-auto mb-3 bg-gray-100 rounded-full flex items-center justify-center">
+              <span class="text-gray-400 text-xl">→</span>
+            </div>
+            <p class="text-sm">No arrows yet</p>
+            <p class="text-xs">Click "Add Arrow" to create your first arrow</p>
+          </div>
+        {/if}
+      </div>
+
+      <!-- Arrow Properties -->
+      {#if selectedArrow}
+        <div class="border-t border-gray-200 pt-4 mt-4 space-y-4">
+          <h5 class="font-medium text-gray-700">Arrow Properties</h5>
+          
+          <!-- Color -->
+          <div>
+            <label class="block text-sm font-medium text-gray-600 mb-2">Color</label>
+            <div class="flex space-x-2">
+              <input 
+                type="color" 
+                value={selectedArrow.color}
+                on:input={(e) => handleArrowColorChange(e.target.value)}
+                class="w-12 h-8 rounded border border-gray-200 cursor-pointer"
+              />
+              <div class="flex space-x-1">
+                {#each ['#000000', '#ffffff', '#dc2626', '#1e40af', '#065f46', '#d97706', '#7c3aed', '#f59e0b'] as color}
+                  <button
+                    class="w-6 h-6 rounded border-2 {selectedArrow.color === color ? 'border-primary-500' : 'border-gray-200'} transition-all hover:scale-110"
+                    style="background-color: {color}"
+                    on:click={() => handleArrowColorChange(color)}
+                    title="Set arrow color"
+                  ></button>
+                {/each}
+              </div>
+            </div>
+          </div>
+          
+          <!-- Width -->
+          <div>
+            <label class="block text-sm font-medium text-gray-600 mb-2">
+              Width: {selectedArrow.width}px
+            </label>
+            <input 
+              type="range" 
+              min="1" 
+              max="12" 
+              value={selectedArrow.width}
+              on:input={(e) => handleArrowWidthChange(parseInt(e.target.value))}
+              class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider"
+            />
+            <div class="flex justify-between text-xs text-gray-400 mt-1">
+              <span>1px</span>
+              <span>12px</span>
+            </div>
+          </div>
+
+          <!-- Length Control -->
+          <div>
+            <label class="block text-sm font-medium text-gray-600 mb-2">
+              Length: {Math.round(Math.sqrt(Math.pow(selectedArrow.endX - selectedArrow.startX, 2) + Math.pow(selectedArrow.endY - selectedArrow.startY, 2)))}px
+            </label>
+            <input 
+              type="range" 
+              min="50" 
+              max="300" 
+              value={Math.sqrt(Math.pow(selectedArrow.endX - selectedArrow.startX, 2) + Math.pow(selectedArrow.endY - selectedArrow.startY, 2))}
+              on:input={(e) => {
+                const newLength = parseInt(e.target.value);
+                const currentAngle = Math.atan2(selectedArrow.endY - selectedArrow.startY, selectedArrow.endX - selectedArrow.startX);
+                const newEndX = selectedArrow.startX + Math.cos(currentAngle) * newLength;
+                const newEndY = selectedArrow.startY + Math.sin(currentAngle) * newLength;
+                canvasStore.updateArrow(selectedArrow.id, { endX: newEndX, endY: newEndY });
+              }}
+              class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider"
+            />
+            <div class="flex justify-between text-xs text-gray-400 mt-1">
+              <span>50px</span>
+              <span>300px</span>
+            </div>
+          </div>
+
+          <!-- Rotation Control -->
+          <div>
+            <label class="block text-sm font-medium text-gray-600 mb-2">
+              Rotation: {Math.round(Math.atan2(selectedArrow.endY - selectedArrow.startY, selectedArrow.endX - selectedArrow.startX) * 180 / Math.PI)}°
+            </label>
+            <input 
+              type="range" 
+              min="-180" 
+              max="180" 
+              value={Math.atan2(selectedArrow.endY - selectedArrow.startY, selectedArrow.endX - selectedArrow.startX) * 180 / Math.PI}
+              on:input={(e) => {
+                const newAngle = parseInt(e.target.value) * Math.PI / 180;
+                const currentLength = Math.sqrt(Math.pow(selectedArrow.endX - selectedArrow.startX, 2) + Math.pow(selectedArrow.endY - selectedArrow.startY, 2));
+                const newEndX = selectedArrow.startX + Math.cos(newAngle) * currentLength;
+                const newEndY = selectedArrow.startY + Math.sin(newAngle) * currentLength;
+                canvasStore.updateArrow(selectedArrow.id, { endX: newEndX, endY: newEndY });
+              }}
+              class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider"
+            />
+            <div class="flex justify-between text-xs text-gray-400 mt-1">
+              <span>-180°</span>
+              <span>180°</span>
+            </div>
+          </div>
+
+          <!-- Position Controls -->
+        <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="block text-sm font-medium text-gray-600 mb-1">Start X</label>
+              <input 
+                type="number" 
+                value={Math.round(selectedArrow.startX)}
+                on:input={(e) => canvasStore.updateArrow(selectedArrow.id, { startX: parseInt(e.target.value) || 0 })}
+                class="w-full px-2 py-1 text-sm border border-gray-200 rounded focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+              />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-600 mb-1">Start Y</label>
+              <input 
+                type="number" 
+                value={Math.round(selectedArrow.startY)}
+                on:input={(e) => canvasStore.updateArrow(selectedArrow.id, { startY: parseInt(e.target.value) || 0 })}
+                class="w-full px-2 py-1 text-sm border border-gray-200 rounded focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+              />
+            </div>
+          </div>
+        </div>
+      {/if}
+    </div>
         
         <!-- Quick Actions -->
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
